@@ -2,15 +2,29 @@ package at.ac.tgm.insy.sem7.aufgabe2.pdamianik;
 
 import java.io.*;
 import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 
+import at.ac.tgm.insy.sem7.aufgabe2.pdamianik.model.Article;
+import at.ac.tgm.insy.sem7.aufgabe2.pdamianik.model.Client;
+import at.ac.tgm.insy.sem7.aufgabe2.pdamianik.model.Order;
+import at.ac.tgm.insy.sem7.aufgabe2.pdamianik.model.OrderLine;
+import org.hibernate.Session;
+import org.hibernate.SessionFactory;
+import org.hibernate.boot.Metadata;
+import org.hibernate.boot.MetadataSources;
+import org.hibernate.boot.registry.StandardServiceRegistry;
+import org.hibernate.boot.registry.StandardServiceRegistryBuilder;
+import org.hibernate.query.Query;
+import org.hibernate.transform.AliasToEntityMapResultTransformer;
 import org.intellij.lang.annotations.Language;
 import org.json.*;
-import java.sql.*;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
+
+import javax.persistence.TypedQuery;
 
 /**
  * INSY Webshop at.ac.tgm.insy.sem7.aufgabe2.pdamianik.Server
@@ -22,25 +36,35 @@ public class Server {
      */
     private static final int PORT = 8000;
 
+    private SessionFactory sessionFactory;
+
     /**
      * Connect to the database
-     * @throws IOException
      */
-    Connection setupDB()  {
-        String rootPath = Thread.currentThread().getContextClassLoader().getResource("").getPath();
-        Properties dbProps = new Properties();
-        try {
-            dbProps.load(new FileInputStream(rootPath + "db.properties"));
-            return DriverManager.getConnection(dbProps.getProperty("url"), dbProps);
-        } catch (Exception e) {
-            e.printStackTrace();
+    Session setupDB() throws IOException {
+        if (sessionFactory == null) {
+            String propertiesFile = Objects.requireNonNull(Thread.currentThread().getContextClassLoader().getResource("db.properties")).getPath();
+
+            Properties properties = new Properties();
+
+            try (BufferedInputStream stream = new BufferedInputStream(new FileInputStream(propertiesFile))) {
+                properties.load(stream);
+            }
+
+            StandardServiceRegistry ssr = new StandardServiceRegistryBuilder()
+                    .configure("hibernate.cfg.xml")
+                    .applySetting("hibernate.connection.url", properties.getProperty("url"))
+                    .applySetting("hibernate.connection.username", properties.getProperty("user"))
+                    .applySetting("hibernate.connection.password", properties.getProperty("password"))
+                    .build();
+            Metadata metadata = new MetadataSources(ssr).getMetadataBuilder().build();
+            sessionFactory = metadata.getSessionFactoryBuilder().build();
         }
-        return null;
+        return sessionFactory.openSession();
     }
 
     /**
      * Startup the Webserver
-     * @throws IOException
      */
     public void start() throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress(PORT), 0);
@@ -65,38 +89,42 @@ public class Server {
      * Handler for listing all articles
      */
     class ArticlesHandler implements HttpHandler {
-        @Language("PostgreSQL")
-        private static final String QUERY = "SELECT * FROM articles;";
+        @Language("HQL")
+        private static final String QUERY= "FROM Article";
 
         @Override
         public void handle(HttpExchange t) throws IOException {
-            Connection conn = setupDB();
+            Session conn = setupDB();
+            TypedQuery<Article> query = conn.createQuery(QUERY);
 
-            JSONArray res = Util.queryToJSON(conn, QUERY);
+            List<Article> articles = query.getResultList();
+            JSONArray res = new JSONArray(articles);
 
             t.getResponseHeaders().set("Content-Type", "application/json");
             answerRequest(t,res.toString());
+            conn.close();
         }
-
     }
 
     /**
      * Handler for listing all clients
      */
     class ClientsHandler implements HttpHandler {
-        @Language("PostgreSQL")
-        private static final String QUERY = "SELECT * FROM clients;";
+        @Language("HQL")
+        private static final String QUERY = "FROM Client";
 
         @Override
         public void handle(HttpExchange t) throws IOException {
-            Connection conn = setupDB();
+            Session conn = setupDB();
+            TypedQuery<Client> query = conn.createQuery(QUERY);
 
-            JSONArray res = Util.queryToJSON(conn, QUERY);
+            List<Client> clients = query.getResultList();
+            JSONArray res = new JSONArray(clients);
 
             t.getResponseHeaders().set("Content-Type", "application/json");
             answerRequest(t,res.toString());
+            conn.close();
         }
-
     }
 
 
@@ -104,25 +132,30 @@ public class Server {
      * Handler for listing all orders
      */
     class OrdersHandler implements HttpHandler {
-        @Language("PostgreSQL")
-        private static final String QUERY = "SELECT o.id AS id, c.name AS client, COUNT(ol.id) AS lines, SUM(a.price * ol.amount) AS price " +
-                "FROM order_lines ol " +
-                "INNER JOIN articles a on ol.article_id = a.id " +
-                "INNER JOIN orders o on o.id = ol.order_id " +
-                "INNER JOIN clients c on c.id = o.client_id " +
-                "GROUP BY o.id, c.name " +
-                "ORDER BY o.id;";
+        @Language("HQL")
+        private static final String QUERY = "SELECT " +
+                "o.id AS id, " +
+                "c.name AS client_name, " +
+                "COUNT(ol) AS article_count, " +
+                "SUM(a.price * ol.amount) AS price " +
+                "FROM Order AS o " +
+                "INNER JOIN o.client AS c " +
+                "INNER JOIN o.orderLines AS ol " +
+                "JOIN ol.article AS a " +
+                "GROUP BY o.id, c.name";
 
         @Override
         public void handle(HttpExchange t) throws IOException {
-            Connection conn = setupDB();
+            Session conn = setupDB();
 
-            JSONArray res = Util.queryToJSON(conn, QUERY);
+            Query query = conn.createQuery(QUERY)
+                    .setResultTransformer(AliasToEntityMapResultTransformer.INSTANCE);
+            JSONArray res = new JSONArray(query.getResultList());
 
             t.getResponseHeaders().set("Content-Type", "application/json");
-            answerRequest(t,res.toString());
+            answerRequest(t, res.toString());
+            conn.close();
         }
-
     }
 
    
@@ -132,67 +165,59 @@ public class Server {
     class PlaceOrderHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange t) throws IOException {
+            t.getResponseHeaders().set("Content-Type", "application/json");
 
-            Connection conn = setupDB();
-            Map <String,String> params  = queryToMap(t.getRequestURI().getQuery());
+            Session conn = setupDB();
+            Map<String,String> params  = queryToMap(t.getRequestURI().getQuery());
 
             int client_id = Integer.parseInt(params.get("client_id"));
+            TypedQuery<Client> query = conn.createQuery("FROM Client C WHERE C.id = " + client_id);
+            Client client = query.getSingleResult();
 
             String response;
             try {
-                Statement stmt = conn.createStatement();
-                ResultSet rs = stmt.executeQuery("SELECT id FROM orders ORDER BY id DESC LIMIT 1");
-                rs.next();
-                int order_id = rs.getInt("id") + 1;
-                stmt.close();
+                conn.beginTransaction();
 
-                PreparedStatement ps;
+                Order order = new Order();
 
-                ps = conn.prepareStatement("INSERT INTO orders (id, client_id) VALUES (?, ?);");
-                ps.setInt(1, order_id);
-                ps.setInt(2, client_id);
-                ps.executeUpdate();
-                ps.close();
+                order.setClient(client);
+                order.setCreatedAt(new Date());
+                order.setOrderLines(new HashSet<>());
 
                 for (int i = 1; i <= (params.size()-1) / 2; ++i ){
                     int article_id = Integer.parseInt(params.get("article_id_"+i));
                     int amount = Integer.parseInt(params.get("amount_"+i));
 
-                    ps = conn.prepareStatement("SELECT amount FROM articles WHERE id = ?;");
-                    ps.setInt(1, article_id);
-                    rs = ps.executeQuery();
-                    rs.next();
-                    int available = rs.getInt(1);
-                    rs.close();
-                    ps.close();
+                    TypedQuery<Article> query1 = conn.createQuery("FROM Article WHERE id = " + article_id);
+                    Article article = query1.getSingleResult();
+                    int available = article.getAmountAvailable();
 
                     if (available < amount)
                         throw new IllegalArgumentException(String.format("Not enough items of article #%d available", article_id));
 
-                    ps = conn.prepareStatement("UPDATE articles SET amount = amount - ? WHERE id = ?;");
-                    ps.setInt(1, amount);
-                    ps.setInt(2, article_id);
-                    ps.executeUpdate();
-                    ps.close();
+                    article.setAmountAvailable(available - amount);
+                    conn.update(article);
 
-                    ps = conn.prepareStatement("INSERT INTO order_lines (article_id, order_id, amount) VALUES (?, ?, ?)");
-                    ps.setInt(1, article_id);
-                    ps.setInt(2, order_id);
-                    ps.setInt(3, amount);
-                    ps.executeUpdate();
-                    ps.close();
+                    OrderLine orderLine = new OrderLine();
+                    orderLine.setArticle(article);
+                    orderLine.setAmount(amount);
+                    conn.save(orderLine);
+                    order.getOrderLines().add(orderLine);
                 }
+                conn.save(order);
+                conn.getTransaction().commit();
 
-                t.getResponseHeaders().set("Content-Type", "application/json");
-                response = String.format("{\"order_id\": %d}", order_id);
-            } catch (IllegalArgumentException | SQLException iae) {
-                iae.printStackTrace();
-                response = String.format("{\"error\":\"%s\"}", iae.getMessage());
+                response = String.format("{\"order_id\": %d}", order.getId());
+                answerRequest(t, response);
+            } catch (Exception e) {
+                conn.getTransaction().rollback();
+                e.printStackTrace();
+                response = String.format("{\"error\":\"%s\"}", e.getMessage());
+                t.sendResponseHeaders(400, response.getBytes().length);
+                OutputStream responseStream = t.getResponseBody();
+                responseStream.write(response.getBytes(StandardCharsets.UTF_8));
+                responseStream.close();
             }
-
-            answerRequest(t, response);
-
-
         }
     }
 
@@ -222,7 +247,6 @@ public class Server {
      * Helper function to send an answer given as a String back to the browser
      * @param t HttpExchange of the request
      * @param response Answer to send
-     * @throws IOException
      */
     private void answerRequest(HttpExchange t, String response) throws IOException {
         byte[] payload = response.getBytes();
