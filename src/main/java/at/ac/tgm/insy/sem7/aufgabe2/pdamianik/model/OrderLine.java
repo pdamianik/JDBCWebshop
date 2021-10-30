@@ -1,9 +1,17 @@
 package at.ac.tgm.insy.sem7.aufgabe2.pdamianik.model;
 
+import javax.persistence.*;
+
+@Entity
+@Table(name = "order_lines")
 public class OrderLine {
-	private Article article;
+	@Id @GeneratedValue(generator = "increment")
 	private int id;
+
 	private int amount;
+
+	@ManyToOne(cascade = CascadeType.ALL, fetch = FetchType.EAGER)
+	private Article article;
 
 	public int getAmount() {
 		return amount;

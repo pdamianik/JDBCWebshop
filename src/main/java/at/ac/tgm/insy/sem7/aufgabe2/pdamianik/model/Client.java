@@ -1,10 +1,19 @@
 package at.ac.tgm.insy.sem7.aufgabe2.pdamianik.model;
 
+import javax.persistence.*;
+
+@Entity
+@Table(name = "clients")
 public class Client {
+	@Id @GeneratedValue(generator = "increment")
 	private int id;
+
 	private String name;
+
 	private String address;
+
 	private String city;
+
 	private String country;
 
 	public String getCountry() {

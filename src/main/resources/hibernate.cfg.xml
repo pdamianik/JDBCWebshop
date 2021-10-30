@@ -4,5 +4,10 @@
     <session-factory>
         <property name="hibernate.dialect">org.hibernate.dialect.PostgreSQL95Dialect</property>
         <property name="hibernate.connection.driver_class">org.postgresql.Driver</property>
+        <mapping package="at.ac.tgm.insy.sem7.aufgabe2.pdamianik.model"/>
+        <mapping class="at.ac.tgm.insy.sem7.aufgabe2.pdamianik.model.Article"/>
+        <mapping class="at.ac.tgm.insy.sem7.aufgabe2.pdamianik.model.Client"/>
+        <mapping class="at.ac.tgm.insy.sem7.aufgabe2.pdamianik.model.Order"/>
+        <mapping class="at.ac.tgm.insy.sem7.aufgabe2.pdamianik.model.OrderLine"/>
     </session-factory>
 </hibernate-configuration>

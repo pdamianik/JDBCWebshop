@@ -1,12 +1,23 @@
 package at.ac.tgm.insy.sem7.aufgabe2.pdamianik.model;
 
+import javax.persistence.*;
 import java.util.Date;
 import java.util.Set;
 
+@Entity
+@Table(name = "orders")
 public class Order {
-	private Client client;
-	private Date createdAt;
+	@Id @GeneratedValue(generator = "increment")
 	private int id;
+
+	@ManyToOne(cascade = CascadeType.ALL, fetch = FetchType.EAGER)
+	private Client client;
+
+	@Column(name = "created_at")
+	private Date createdAt;
+
+	@OneToMany(cascade = CascadeType.ALL, fetch = FetchType.EAGER)
+	@JoinColumn(name = "order_id")
 	private Set<OrderLine> orderLines;
 
 	public Set<OrderLine> getOrderLines() {
